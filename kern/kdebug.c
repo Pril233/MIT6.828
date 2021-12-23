@@ -46,7 +46,15 @@ extern const char __STABSTR_END__[];		// End of string table
 //		left = 0, right = 657;
 //		stab_binsearch(stabs, &left, &right, N_SO, 0xf0100184);
 //	will exit setting left = 118, right = 554.
-//
+//函数接受4个参数，第一是stab总表（这个说法并不是很恰当，
+//虽然函数的含义是传入一个总表，但其实只要传入表中的一项当做起始位置函数也能正常工作），
+//第二第三是表的下标的范围，代表在这个下标范围内寻找，
+//若找到了，则第二个参数赋值为相应的表的下标，若没有找到，
+//则right>left，第四个参数传入要寻找的表项的类型，也就是上面图的第二列。
+//第五个参数代表要寻找的值，也就是上面图中的第五列，根据这个值寻找表项。
+//而且为了比较高效，这个函数还是个二分搜索的。更加详细的说明函数注释都解释的很清楚。
+//主要作用是通过拿eip和type分别去和stabs section中的n_value和n_type比较，
+//就可以找到对应的stabs表中的项的地址
 static void
 stab_binsearch(const struct Stab *stabs, int *region_left, int *region_right,
 	       int type, uintptr_t addr)
@@ -57,6 +65,7 @@ stab_binsearch(const struct Stab *stabs, int *region_left, int *region_right,
 		int true_m = (l + r) / 2, m = true_m;
 
 		// search for earliest stab with right type
+		//在[l, m]中寻找stabs[?].n_type = type,l通常是0
 		while (m >= l && stabs[m].n_type != type)
 			m--;
 		if (m < l) {	// no match in [l, m]
@@ -117,6 +126,12 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 	info->eip_fn_narg = 0;
 
 	// Find the relevant set of stabs
+	//JOS 将处理器的 32 位线性地址分为用户环境(低位地址)以及内核环境(高位地址)。
+	//分界线在 inc/memlayout.h 中定义为 ULIM
+	// __STAB_BEGIN__，__STAB_END__，__STABSTR_BEGIN__，__STABSTR_END__
+	//等符号均在kern/kern.ld文件定义，
+	//它们分别代表.stab和.stabstr这两个段开始与结束的地址。
+	//当addr为内核环境地址时（why？），初始化stab*
 	if (addr >= ULIM) {
 		stabs = __STAB_BEGIN__;
 		stab_end = __STAB_END__;
@@ -139,6 +154,8 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 	// Search the entire set of stabs for the source file (type N_SO).
 	lfile = 0;
 	rfile = (stab_end - stabs) - 1;
+	//四个参数：stabs表起始位置，0，表的大小，N_SO,addr
+	//N_SO:main source file name,所以这里是通过addr(eip)找源文件
 	stab_binsearch(stabs, &lfile, &rfile, N_SO, addr);
 	if (lfile == 0)
 		return -1;
@@ -147,12 +164,14 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 	// (N_FUN).
 	lfun = lfile;
 	rfun = rfile;
+	//N_FUN(procedure name) 通过addr(eip)找函数
 	stab_binsearch(stabs, &lfun, &rfun, N_FUN, addr);
 
 	if (lfun <= rfun) {
 		// stabs[lfun] points to the function name
 		// in the string table, but check bounds just in case.
 		if (stabs[lfun].n_strx < stabstr_end - stabstr)
+			//stabs[lfun].n_strx只是偏移地址，要加上基地址才是函数名字的真正地址
 			info->eip_fn_name = stabstr + stabs[lfun].n_strx;
 		info->eip_fn_addr = stabs[lfun].n_value;
 		addr -= info->eip_fn_addr;
@@ -179,6 +198,12 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 	//	Look at the STABS documentation and <inc/stab.h> to find
 	//	which one.
 	// Your code here.
+	//这里是通过addr(eip)找行数
+	stab_binsearch(stabs, &lline, &rline, N_SLINE, addr);
+	if(lline <= rline)
+		info->eip_line = stabs[lline].n_desc;
+	else
+		info->eip_line = -1;
 
 
 	// Search backwards from the line number for the relevant filename

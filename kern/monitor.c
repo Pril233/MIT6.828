@@ -58,6 +58,33 @@ int
 mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 {
 	// Your code here.
+	//ebp = getebp()
+	//while(ebp = 0){
+	//cprintf(ebp,ebp[1],ebp[2]...ebp[6])
+	//ebp = *ebp 这个语句会让堆栈返回
+	//}
+	uint32_t *ebp;
+	struct Eipdebuginfo info;
+
+    ebp = (uint32_t *)read_ebp();
+
+    cprintf("Stack backtrace:\r\n");
+
+    while (ebp)
+    {
+        cprintf("  ebp %08x  eip %08x  args %08x %08x %08x %08x %08x\r\n", 
+                ebp, ebp[1], ebp[2], ebp[3], ebp[4], ebp[5], ebp[6]);
+		if(	debuginfo_eip(ebp[1],&info) == 0){
+			//注意，返回的Eipdebuginfo结构体的eip_fn_name字段除了函数名外还有一段尾巴，
+			//比如test_backtrace:F(0,25)，需要将":F(0,25)"去掉，
+			//可以使用printf("%.*s", length, string)来实现。代码如下：
+			cprintf("	%s:%d: %.*s+%d\r\n",info.eip_file,info.eip_line,info.eip_fn_namelen,info.eip_fn_name,ebp[1]-info.eip_fn_addr);
+
+		}
+
+        ebp = (uint32_t *)*ebp;
+    }
+
 	return 0;
 }
 
@@ -114,6 +141,7 @@ monitor(struct Trapframe *tf)
 
 	cprintf("Welcome to the JOS kernel monitor!\n");
 	cprintf("Type 'help' for a list of commands.\n");
+	
 
 
 	while (1) {
